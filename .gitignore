@@ -1,0 +1,32 @@
+# Node.js
+node_modules/
+.next/
+*.log
+.env.local
+.env.*.local
+
+# R
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+renv/library/
+renv/staging/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+/tmp/
+*.tmp
+
+# Large data files (keep structure, ignore large downloads)
+IsoscapeBuild/data_raw/*/
+!IsoscapeBuild/data_raw/calibration/
+FTMapping/output/
+*.zip
+
+# Log files
+*.log
+nohup.out
