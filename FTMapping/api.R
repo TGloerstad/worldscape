@@ -551,6 +551,93 @@ function(res, sample = "", prior = "weighted", mass = 0.95, fact = 2, buffer_deg
   return(res)
 }
 
+#* Country table restricted to HPD mass (probability tier)
+#* @get /worldmapping/country_hpd
+function(res, sample = "", prior = "weighted", mass = 0.95) {
+  if (!nzchar(sample)) { res$status <- 400; return(list(error = "missing sample")) }
+  mass <- as.numeric(mass); if (!is.finite(mass) || mass <= 0 || mass >= 1) mass <- 0.95
+  if (!ensure_pkg('terra')) { res$status <- 500; return(list(error = "terra required")) }
+  library(terra)
+
+  out_dir <- to_abs("", file.path(BASE_DIR, "output"))
+  prior_dir <- ifelse(tolower(prior) == "unweighted", "Unweighted", "Weighted")
+  post_file <- file.path(out_dir, sample, paste0(sample, ", ", prior_dir), paste0(sample, " posterior.tiff"))
+  if (!file.exists(post_file)) { res$status <- 400; return(list(error = paste("posterior not found:", post_file))) }
+
+  post <- rast(post_file)
+  post <- post / 255
+
+  # HPD mask helper
+  hpd_mask <- function(posterior, mass = 0.95) {
+    v <- values(posterior, mat = FALSE)
+    idx <- which(!is.na(v) & v > 0)
+    probs <- v[idx]
+    if (length(probs) == 0) { out <- posterior; values(out) <- 0L; return(out) }
+    ord <- order(probs, decreasing = TRUE)
+    total <- sum(probs, na.rm = TRUE); if (!is.finite(total) || total <= 0) total <- 1
+    cs <- cumsum(probs[ord]) / total
+    k <- which(cs >= mass)[1]; if (is.na(k)) k <- length(cs)
+    pick <- rep(0L, length(v)); sel <- rep(0L, length(probs)); if (k >= 1) sel[seq_len(k)] <- 1L
+    pick[idx[ord]] <- sel
+    out <- posterior; values(out) <- pick; out
+  }
+
+  # Restrict to HPD mass
+  mask <- hpd_mask(post, mass)
+  post_restricted <- post * mask
+
+  # Countries (worldXUAR shapefile) — separate XUAR vs Non‑XUAR China
+  shp <- file.path(BASE_DIR, "shapefilesEtc", "worldXUAR.shp")
+  if (!file.exists(shp)) { res$status <- 500; return(list(error = "worldXUAR.shp not found")) }
+  vec <- tryCatch(terra::vect(shp), error = function(e) NULL)
+  if (is.null(vec)) { res$status <- 500; return(list(error = "failed to read worldXUAR.shp")) }
+  # Project to raster CRS if needed
+  try({ if (!identical(terra::crs(vec), terra::crs(post_restricted))) vec <- terra::project(vec, terra::crs(post_restricted)) }, silent = TRUE)
+
+  nms <- names(vec)
+  has_n0 <- "NAME_0" %in% nms || "ADM0_EN" %in% nms
+  has_n1 <- "NAME_1" %in% nms || "ADM1_EN" %in% nms
+  get_n0 <- function(i) {
+    if ("NAME_0" %in% nms) return(vec$NAME_0[i])
+    if ("ADM0_EN" %in% nms) return(vec$ADM0_EN[i])
+    return(NA_character_)
+  }
+  get_n1 <- function(i) {
+    if ("NAME_1" %in% nms) return(vec$NAME_1[i])
+    if ("ADM1_EN" %in% nms) return(vec$ADM1_EN[i])
+    return(NA_character_)
+  }
+
+  ex <- tryCatch(terra::extract(post_restricted, vec, fun = sum, na.rm = TRUE), error = function(e) NULL)
+  if (is.null(ex) || nrow(ex) == 0) return(list(rows = list()))
+
+  sums <- ex[[2]]
+  if (is.null(sums)) sums <- ex[[ncol(ex)]]
+  sums[!is.finite(sums)] <- 0
+
+  labels <- character(length(sums))
+  for (i in seq_along(sums)) {
+    c0 <- if (has_n0) as.character(get_n0(i)) else NA_character_
+    c1 <- if (has_n1) as.character(get_n1(i)) else NA_character_
+    if (!is.na(c0) && c0 == "China" && !is.na(c1) && grepl("Xinjiang", c1, ignore.case = TRUE)) {
+      labels[i] <- "Xinjiang Uygur Autonomous Region"
+    } else if (!is.na(c0) && c0 == "China") {
+      labels[i] <- "Non-XUAR China"
+    } else {
+      labels[i] <- ifelse(!is.na(c0), c0, ifelse(!is.na(c1), c1, "Unknown"))
+    }
+  }
+
+  df <- data.frame(label = labels, sumv = as.numeric(sums))
+  agg <- stats::aggregate(sumv ~ label, data = df, sum)
+  total <- sum(agg$sumv, na.rm = TRUE)
+  if (!is.finite(total) || total <= 0) total <- 1
+  agg$hpd_pct <- (agg$sumv / total) * 100
+  agg <- agg[order(-agg$hpd_pct), c("label", "hpd_pct")]
+
+  list(rows = lapply(seq_len(nrow(agg)), function(i) list(country = as.character(agg$label[i]), hpd_pct = as.numeric(agg$hpd_pct[i]))))
+}
+
 #* HPD mask as PNG data URL with bounds (on-the-fly)
 #* @get /worldmapping/hpd_png
 function(res, sample = "", prior = "weighted", mass = 0.95) {

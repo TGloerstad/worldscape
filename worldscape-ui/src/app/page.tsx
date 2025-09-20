@@ -233,7 +233,7 @@ export default function Home() {
   }
 
   return (
-    <main style={{ padding: 24, maxWidth: 1600 }}>
+    <main style={{ padding: 24, maxWidth: 1920 }}>
       <h1>WorldScape Mapper (Local)</h1>
 
       <div style={{ display: "flex", gap: 12, margin: "12px 0" }}>
