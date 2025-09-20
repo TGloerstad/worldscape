@@ -7,6 +7,130 @@ wm_log <- function(...) cat("[WorldMapping]", paste0(..., collapse = ""), "\n")
 
 `%||%` <- function(x, y) if (is.null(x) || length(x) == 0) y else x
 
+# Create high-resolution styled map using modern geodata approach
+wm_create_styled_map <- function(mask, output_path, sample_name, title, shapes_dir = NULL) {
+  tryCatch({
+    # First try to use geodata for high-resolution boundaries
+    world_boundaries <- wm_get_high_res_world()
+    
+    if (is.null(world_boundaries)) {
+      # Fallback to existing shapefiles if geodata fails
+      shp_candidates <- c(
+        file.path(shapes_dir %||% "", "worldXUAR.shp"),
+        file.path(shapes_dir %||% "", "world.shp")
+      )
+      wm_log("Checking shapefile candidates: ", paste(shp_candidates, collapse=", "))
+      existing_shps <- shp_candidates[file.exists(shp_candidates)]
+      wm_log("Found existing shapefiles: ", paste(existing_shps, collapse=", "))
+      
+      shp_path <- existing_shps[1]
+      if (length(existing_shps) == 0 || is.na(shp_path)) {
+        wm_log("ERROR: No boundaries found, using raw mask output")
+        terra::writeRaster(mask * 255, output_path, overwrite = TRUE, datatype = "INT1U", NAflag = 0)
+        return()
+      }
+      wm_log("Loading shapefile: ", shp_path)
+      world_boundaries <- terra::vect(shp_path)
+      wm_log("Loaded shapefile with ", nrow(world_boundaries), " features")
+    }
+    
+    # Handle Xinjiang special region
+    xinjiang <- NULL
+    if ("NAME_0" %in% names(world_boundaries)) {
+      # Fix Xinjiang name standardization
+      if (any(grepl("Xinjiang", world_boundaries$NAME_0))) {
+        fixname <- gsub("Xinjiang Uygur Autonomous Region", "Xinjiang Uyghur Autonomous Region", world_boundaries$NAME_0)
+        world_boundaries$NAME_0 <- fixname
+        xinjiang <- subset(world_boundaries, world_boundaries$NAME_0 == "Xinjiang Uyghur Autonomous Region")
+      }
+    }
+
+    # Ensure boundary CRS matches raster CRS
+    try({ world_boundaries <- project(world_boundaries, crs(mask)) }, silent = TRUE)
+
+    # Shared render routine to ensure PNG and TIFF are identical
+    render_map <- function() {
+      par(xaxs = "i", yaxs = "i")
+      terra::plot(world_boundaries,
+                  col = "grey95",
+                  border = "grey30",
+                  lwd = 0.35,
+                  ylim = c(-55, 83.500904),
+                  xlim = c(-140, 180),
+                  axes = FALSE,
+                  main = paste(sample_name, title))
+      terra::plot(mask,
+                  xlim = c(-140, 180),
+                  ylim = c(-55, 83.500904),
+                  add = TRUE,
+                  legend = FALSE,
+                  col = c('transparent', '#50b691'))
+      if (!is.null(xinjiang) && nrow(xinjiang) > 0) {
+        lines(xinjiang, col = '#3d62a9', lwd = 2)
+      }
+      north(type = 2, label = '', xy = 'bottomleft')
+      sbar(5000, 'bottomleft', type = "bar", below = "km", label = c('', 2500, 5000), cex = 0.8)
+      mtext(paste0("FloraTrace, Inc. 2024, All Rights Reserved.\nProprietary and Confidential. Date Created: ",
+                   format(Sys.time(), "%m/%d/%Y")), side = 1)
+    }
+
+    # Helper: open PNG device using ragg if available
+    open_png <- function(png_path, width = 2804, height = 1496) {
+      if (requireNamespace("ragg", quietly = TRUE)) {
+        ragg::agg_png(filename = png_path, width = width, height = height, units = "px", background = "white", res = 300)
+      } else {
+        png(filename = png_path, width = width, height = height, units = "px", bg = "white", res = 300, type = "cairo")
+      }
+    }
+
+    # 1) Write high-quality PNG for UI display
+    png_path <- sub("\\.tiff$", ".png", output_path)
+    wm_log("Rendering PNG: ", basename(png_path))
+    open_png(png_path)
+    render_map()
+    dev.off()
+
+    # 2) Also write TIFF (non-GeoTIFF image) for backward compatibility
+    #    Note: base::tiff() does not embed georeferencing; kept only to avoid breaking consumers expecting .tiff
+    wm_log("Rendering TIFF (compat): ", basename(output_path))
+    tiff(filename = output_path, width = 2804, height = 1496, units = "px", pointsize = 18)
+    render_map()
+    dev.off()
+
+    wm_log("Created styled maps (PNG + TIFF): ", basename(png_path), ", ", basename(output_path))
+
+  }, error = function(e) {
+    wm_log("Error creating styled map: ", e$message, ". Falling back to raw mask.")
+    # Fallback to raw mask if plotting fails
+    terra::writeRaster(mask * 255, output_path, overwrite = TRUE, datatype = "INT1U", NAflag = 0)
+  })
+}
+
+# Get high-resolution world boundaries using geodata or fallback methods
+wm_get_high_res_world <- function() {
+  tryCatch({
+    # Try to load geodata package
+    if (!requireNamespace("geodata", quietly = TRUE)) {
+      wm_log("Installing geodata package for high-resolution boundaries...")
+      install.packages("geodata", quiet = TRUE)
+    }
+    
+    if (requireNamespace("geodata", quietly = TRUE)) {
+      wm_log("Loading high-resolution world boundaries from geodata...")
+      # Download high-resolution world boundaries (resolution = 1 is highest)
+      world <- geodata::world(path = tempdir(), resolution = 1)
+      wm_log("Successfully loaded geodata world boundaries")
+      return(world)
+    } else {
+      wm_log("geodata package not available, using fallback")
+      return(NULL)
+    }
+  }, error = function(e) {
+    wm_log("Error loading geodata boundaries: ", e$message, ". Using fallback.")
+    return(NULL)
+  })
+}
+
 wm_read_raster <- function(path, name) {
   if (!file.exists(path)) stop("Missing ", name, ": ", path)
   rast(path)
@@ -188,15 +312,11 @@ wm_assign_sample <- function(isb_root, sample_name, d_vec, output_dir,
   terra::writeRaster(post_w_scaled, file.path(dir_w, paste0(sample_name, " posterior.tiff")), overwrite = TRUE, datatype = "INT1U", NAflag = 0)
   terra::writeRaster(post_u_scaled, file.path(dir_u, paste0(sample_name, " posterior.tiff")), overwrite = TRUE, datatype = "INT1U", NAflag = 0)
   
-  # Write masks as 8-bit Byte (0/255) for better preview visibility
-  w10b <- w10 * 255
-  w95b <- w95 * 255
-  u10b <- u10 * 255
-  u95b <- u95 * 255
-  terra::writeRaster(w10b, file.path(dir_w, paste0(sample_name, " world10.tiff")), overwrite = TRUE, datatype = "INT1U", NAflag = 0)
-  terra::writeRaster(w95b, file.path(dir_w, paste0(sample_name, " world95.tiff")), overwrite = TRUE, datatype = "INT1U", NAflag = 0)
-  terra::writeRaster(u10b, file.path(dir_u, paste0(sample_name, " world10.tiff")), overwrite = TRUE, datatype = "INT1U", NAflag = 0)
-  terra::writeRaster(u95b, file.path(dir_u, paste0(sample_name, " world95.tiff")), overwrite = TRUE, datatype = "INT1U", NAflag = 0)
+  # Generate styled maps like FTMapping (white background, green probability areas, country borders)
+  wm_create_styled_map(w10, file.path(dir_w, paste0(sample_name, " world10.tiff")), sample_name, "Top 10% by probability (weighted)", shapes_dir)
+  wm_create_styled_map(w95, file.path(dir_w, paste0(sample_name, " world95.tiff")), sample_name, "Top 95% by probability (weighted)", shapes_dir)
+  wm_create_styled_map(u10, file.path(dir_u, paste0(sample_name, " world10.tiff")), sample_name, "Top 10% by probability", shapes_dir)
+  wm_create_styled_map(u95, file.path(dir_u, paste0(sample_name, " world95.tiff")), sample_name, "Top 95% by probability", shapes_dir)
 
   # Tables: country probabilities (top 10) + replicate summary as first row header
   tbl_w <- wm_country_table(post_w, pri_w, shapes_dir, sample_name, top_n = 10)
