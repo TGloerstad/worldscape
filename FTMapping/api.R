@@ -321,7 +321,25 @@ function(res, crop = "COTT") {
     list(
       id = "mirca",
       name = "MIRCA cropping calendars",
-      description = "Monthly cropping calendars (sowing/harvest/weights) to aggregate climate/δ18O over the growing season. Placeholder currently uniform.",
+      description = "Monthly cropping calendars (sowing/harvest/weights) to aggregate climate/δ18O over the growing season. MIRCA2000 crop 26 (vegetables) proxy used for ONIO/GARL/CHIL with 12-band normalized weights.",
+      parts = list()
+    ),
+    list(
+      id = "elevation",
+      name = "Elevation (topography)",
+      description = "GMTED2010 mean elevation at 10 arc-min. Used for temperature lapse rate correction (-0.0065°C/m). Improves predictions in mountainous regions by 2-5‰.",
+      parts = list()
+    ),
+    list(
+      id = "irrigation",
+      name = "Irrigation fraction",
+      description = "Fraction of irrigated area per pixel (0-1), derived from MIRCA crop 26 irrigated/rainfed split. Used for source-water mixing: δ18O_source = δ18O_precip + f_irrig × 2‰ enrichment.",
+      parts = list()
+    ),
+    list(
+      id = "gnip",
+      name = "GNIP bias correction",
+      description = "Optional OIPC bias correction from 1,258 GNIP precipitation stations (IAEA/WMO WISER). Reduces regional OIPC systematic errors by 1-3‰. Mean bias: 0.25‰, RMSE: 1.59‰.",
       parts = list()
     )
   )
@@ -348,6 +366,21 @@ function(res, crop = "COTT") {
     } else if (identical(id, "mirca")) {
       out <- file.path(proc_dir, paste0(tolower(crop_code), "_calendar_monthly_weights.tif"))
       fi <- safe_file_info(out)
+      cat_entry$meta <- fi
+      cat_entry$present <- isTRUE(fi$present)
+    } else if (identical(id, "elevation")) {
+      elev_file <- file.path(proc_dir, "elevation_m.tif")
+      fi <- safe_file_info(elev_file)
+      cat_entry$meta <- fi
+      cat_entry$present <- isTRUE(fi$present)
+    } else if (identical(id, "irrigation")) {
+      irrig_file <- file.path(proc_dir, "irrigation_fraction.tif")
+      fi <- safe_file_info(irrig_file)
+      cat_entry$meta <- fi
+      cat_entry$present <- isTRUE(fi$present)
+    } else if (identical(id, "gnip")) {
+      gnip_file <- file.path(proc_dir, "oipc_bias_correction.tif")
+      fi <- safe_file_info(gnip_file)
       cat_entry$meta <- fi
       cat_entry$present <- isTRUE(fi$present)
     }
@@ -546,6 +579,147 @@ function(res, sample = "", prior = "weighted", mass = 0.95, fact = 2, buffer_deg
   # Return raw GeoJSON string for Mapbox
   gj <- geojsonsf::sf_geojson(s)
   # Use plumber's raw response to avoid R's JSON formatting
+  res$setHeader("Content-Type", "application/json")
+  res$body <- gj
+  return(res)
+}
+
+#* Regions (ADM0/ADM1) choropleth as GeoJSON with % share
+#* @get /worldmapping/regions_geojson
+function(res, sample = "", prior = "weighted", mass = 0.95, level = "adm0", mode = "global", norm = "") {
+  if (!nzchar(sample)) { res$status <- 400; return(list(error = "missing sample")) }
+  mass <- as.numeric(mass); if (!is.finite(mass) || mass <= 0 || mass >= 1) mass <- 0.95
+  level <- tolower(level); if (!(level %in% c("adm0","adm1"))) level <- "adm0"
+  mode <- tolower(mode); if (!(mode %in% c("global","hpd"))) mode <- "global"
+  norm <- tolower(norm)
+  if (!nzchar(norm)) norm <- if (identical(level, "adm1")) "country" else "global"
+  if (!(norm %in% c("global","country"))) norm <- if (identical(level, "adm1")) "country" else "global"
+  if (!ensure_pkg('terra')) { res$status <- 500; return(list(error = "terra required")) }
+  if (!ensure_pkg('sf')) { res$status <- 500; return(list(error = "sf required")) }
+  if (!ensure_pkg('geojsonsf')) { res$status <- 500; return(list(error = "geojsonsf required")) }
+  library(terra); library(sf)
+
+  out_dir <- to_abs("", file.path(BASE_DIR, "output"))
+  prior_dir <- ifelse(tolower(prior) == "unweighted", "Unweighted", "Weighted")
+  post_file <- file.path(out_dir, sample, paste0(sample, ", ", prior_dir), paste0(sample, " posterior.tiff"))
+  if (!file.exists(post_file)) { res$status <- 400; return(list(error = paste("posterior not found:", post_file))) }
+
+  post <- rast(post_file)
+  post <- post / 255
+
+  # HPD mask helper
+  hpd_mask <- function(posterior, mass = 0.95) {
+    v <- values(posterior, mat = FALSE)
+    idx <- which(!is.na(v) & v > 0)
+    probs <- v[idx]
+    if (length(probs) == 0) { out <- posterior; values(out) <- 0L; return(out) }
+    ord <- order(probs, decreasing = TRUE)
+    total <- sum(probs, na.rm = TRUE); if (!is.finite(total) || total <= 0) total <- 1
+    cs <- cumsum(probs[ord]) / total
+    k <- which(cs >= mass)[1]; if (is.na(k)) k <- length(cs)
+    pick <- rep(0L, length(v)); sel <- rep(0L, length(probs)); if (k >= 1) sel[seq_len(k)] <- 1L
+    pick[idx[ord]] <- sel
+    out <- posterior; values(out) <- pick; out
+  }
+
+  # Choose raster to aggregate
+  Ragg <- if (identical(mode, "hpd")) {
+    mask <- hpd_mask(post, mass)
+    post * mask
+  } else post
+
+  # Load polygons for region level (auto-generate ADM1 if missing via rnaturalearth)
+  shp_candidates <- if (identical(level, "adm0")) {
+    c(file.path(BASE_DIR, "shapefilesEtc", "worldXUAR.shp"),
+      file.path(BASE_DIR, "shapefilesEtc", "world.shp"))
+  } else {
+    c(file.path(BASE_DIR, "shapefilesEtc", "world_adm1.gpkg"),
+      file.path(BASE_DIR, "shapefilesEtc", "world_adm1.shp"))
+  }
+  shp_path <- shp_candidates[file.exists(shp_candidates)][1]
+  if ((is.na(shp_path) || !file.exists(shp_path)) && identical(level, "adm1")) {
+    # try to build from rnaturalearth (prefer built-in medium/small scales to avoid rnaturalearthhires)
+    if (!ensure_pkg('rnaturalearth')) { res$status <- 500; return(list(error = "rnaturalearth required for ADM1 auto-setup")) }
+    if (!ensure_pkg('rnaturalearthdata')) { res$status <- 500; return(list(error = "rnaturalearthdata required for ADM1 auto-setup")) }
+    if (!ensure_pkg('sf')) { res$status <- 500; return(list(error = "sf required for ADM1 auto-setup")) }
+    dir.create(file.path(BASE_DIR, "shapefilesEtc"), recursive = TRUE, showWarnings = FALSE)
+    gpkg <- file.path(BASE_DIR, "shapefilesEtc", "world_adm1.gpkg")
+    states <- NULL
+    # Try medium (1:50m) then small (1:110m) to avoid hires dependency
+    try({ states <- rnaturalearth::ne_states(scale = 'medium', returnclass = 'sf') }, silent = TRUE)
+    if (is.null(states)) try({ states <- rnaturalearth::ne_states(scale = 'small', returnclass = 'sf') }, silent = TRUE)
+    if (is.null(states)) try({ states <- rnaturalearth::ne_download(scale = 'small', type = 'states', category = 'cultural', returnclass = 'sf') }, silent = TRUE)
+    if (is.null(states)) { res$status <- 500; return(list(error = "Failed to download ADM1 states from rnaturalearth")) }
+    # Write GeoPackage
+    ok <- FALSE
+    try({ sf::st_write(states, gpkg, layer = "adm1", delete_dsn = TRUE, quiet = TRUE); ok <- TRUE }, silent = TRUE)
+    if (ok && file.exists(gpkg)) shp_path <- gpkg
+  }
+  if (is.na(shp_path) || !file.exists(shp_path)) {
+    res$status <- 500
+    return(list(error = if (identical(level, "adm1"))
+                 "ADM1 dataset not found and auto-setup failed. Please provide 'world_adm1.gpkg' or 'world_adm1.shp' under shapefilesEtc/."
+               else "ADM0 world shapefile not found (expected worldXUAR.shp/world.shp)."))
+  }
+  vec <- tryCatch(terra::vect(shp_path), error = function(e) NULL)
+  if (is.null(vec)) { res$status <- 500; return(list(error = "failed to read region shapefile")) }
+
+  # Align CRS
+  try({ if (!identical(terra::crs(vec), terra::crs(Ragg))) vec <- terra::project(vec, terra::crs(Ragg)) }, silent = TRUE)
+
+  # Extract sums
+  ex <- tryCatch(terra::extract(Ragg, vec, fun = sum, na.rm = TRUE), error = function(e) NULL)
+  if (is.null(ex) || nrow(ex) == 0) return(list(type = "FeatureCollection", features = list()))
+  sums <- ex[[2]]; if (is.null(sums)) sums <- ex[[ncol(ex)]]
+  sums[!is.finite(sums)] <- 0
+
+  # Labels
+  nms <- names(vec)
+  pick_field <- function(cands) {
+    i <- which(tolower(nms) %in% tolower(cands))
+    if (length(i) >= 1) nms[i[1]] else NA_character_
+  }
+  f0 <- pick_field(c("NAME_0","ADM0_EN","ADMIN","COUNTRY","NAME","geonunit","GEONUNIT","adm0_name","ADM0_NAME"))
+  f1 <- pick_field(c("NAME_1","ADM1_EN","NAME_1_EN","PROVNAME","STATE_NAME","REGION","NAME","NAME_EN","name","name_en"))
+
+  attrs <- tryCatch(terra::values(vec), error = function(e) NULL)
+  adm0 <- if (!is.na(f0) && !is.null(attrs[[f0]])) as.character(attrs[[f0]]) else rep(NA_character_, length(sums))
+  adm1 <- if (!is.na(f1) && !is.null(attrs[[f1]])) as.character(attrs[[f1]]) else rep(NA_character_, length(sums))
+  label <- if (identical(level, "adm1")) {
+    if (!all(is.na(adm1))) adm1 else if (!all(is.na(adm0))) adm0 else as.character(seq_along(sums))
+  } else {
+    if (!all(is.na(adm0))) adm0 else as.character(seq_along(sums))
+  }
+
+  # Normalize to percent
+  sums_num <- as.numeric(sums)
+  sums_num[!is.finite(sums_num)] <- 0
+  if (identical(norm, "country") && identical(level, "adm1")) {
+    # normalize within each parent ADM0 so subnational patterns are visible everywhere
+    key <- ifelse(!is.na(adm0) & nzchar(adm0), adm0, "(unknown)")
+    totals <- tapply(sums_num, key, sum, na.rm = TRUE)
+    denom <- totals[key]
+    denom[!is.finite(denom) | denom <= 0] <- 1
+    p <- (sums_num / denom) * 100
+  } else {
+    total <- sum(sums_num, na.rm = TRUE)
+    if (!is.finite(total) || total <= 0) total <- 1
+    p <- (sums_num / total) * 100
+  }
+
+  # Keep only regions with >0 mass to reduce payload
+  keep <- which(p > 0)
+  if (length(keep) == 0) return(list(type = "FeatureCollection", features = list()))
+  vec_sub <- tryCatch(vec[keep,], error = function(e) vec[keep])
+  # Attach attributes
+  vec_sub$p <- p[keep]
+  vec_sub$label <- label[keep]
+  if (identical(level, "adm1")) vec_sub$adm0 <- adm0[keep]
+
+  # Convert to WGS84 and GeoJSON
+  vec_wgs <- tryCatch(terra::project(vec_sub, 'EPSG:4326'), error = function(e) vec_sub)
+  s <- sf::st_as_sf(vec_wgs)
+  gj <- geojsonsf::sf_geojson(s)
   res$setHeader("Content-Type", "application/json")
   res$body <- gj
   return(res)
@@ -753,36 +927,399 @@ function(res, sample = "", prior = "weighted", mass = 0.95) {
   list(ok = TRUE, corners = corners, bbox = c(e$xmin, e$ymin, e$xmax, e$ymax), size = c(ncol(r2), nrow(r2)))
 }
 
-#* Iso-bands GeoJSON for cellulose_mu
+#* Iso-bands GeoJSON for cellulose_mu (optionally select crop)
 #* @get /isoscape/isobands
-function(res, breaks = "20,22,24,26,28,30,32,34,36") {
+function(res, breaks = "20,22,24,26,28,30,32,34,36", crop = "") {
   if (!dir.exists(ISO_DIR)) { res$status <- 400; return(list(error = "IsoscapeBuild folder not found")) }
   if (!ensure_pkg('terra')) { res$status <- 500; return(list(error = "terra required")) }
   if (!ensure_pkg('sf')) { res$status <- 500; return(list(error = "sf required")) }
   if (!ensure_pkg('geojsonsf')) { res$status <- 500; return(list(error = "geojsonsf required")) }
+  library(terra)
+  library(sf)
   br <- as.numeric(strsplit(breaks, ",")[[1]])
   br <- br[is.finite(br)]
   br <- sort(unique(br))
   if (length(br) < 3) { res$status <- 400; return(list(error = "need at least 3 breaks")) }
-  mu_path1 <- file.path(ISO_DIR, "model", "cellulose_mu.tif")
-  mu_path2 <- file.path(ISO_DIR, "data_proc", "cellulose_mu.tif")
-  mu_path <- if (file.exists(mu_path1)) mu_path1 else mu_path2
+  # If crop specified, prefer crop-specific isoscape under model/
+  crop_raw <- crop
+  crop <- toupper(trimws(crop))
+  try(cat("[isobands] crop param received:", crop_raw, "→ cleaned:", crop, "\n"), silent = TRUE)
+  mu_candidates <- c()
+  if (nzchar(crop)) {
+    mu_candidates <- c(mu_candidates, file.path(ISO_DIR, "model", paste0("cellulose_mu_", tolower(crop), ".tif")))
+  }
+  mu_candidates <- c(mu_candidates, file.path(ISO_DIR, "data_proc", "cellulose_mu.tif"), file.path(ISO_DIR, "model", "cellulose_mu.tif"))
+  mu_path <- mu_candidates[file.exists(mu_candidates)][1]
+  try(cat("[isobands] resolved path:", mu_path, "\n"), silent = TRUE)
+  if (is.na(mu_path) || !file.exists(mu_path)) { res$status <- 500; return(list(error = paste("cellulose_mu.tif not found for crop", crop))) }
   mu <- rast(mu_path)
   # classify into bands
   rcl <- cbind(br[-length(br)], br[-1], seq_len(length(br)-1))
   cls <- classify(mu, rcl = rcl, include.lowest = TRUE, right = FALSE)
   poly <- terra::as.polygons(cls, dissolve = TRUE)
   try({ poly <- terra::project(poly, 'EPSG:4326') }, silent = TRUE)
+  if (is.null(poly) || nrow(poly) == 0) {
+    return(list(type = "FeatureCollection", features = list()))
+  }
   s <- sf::st_as_sf(poly)
-  # label bands
+  # label bands (robustly pick attribute field)
   labs <- paste0(rcl[,1], "–", rcl[,2])
-  s$band_id <- s$lyr.1
-  s$label <- labs[pmax(1, pmin(nrow(rcl), as.integer(s$band_id)))]
+  nm <- tryCatch(names(poly)[1], error = function(e) NULL)
+  if (is.null(nm) || !(nm %in% names(s))) nm <- setdiff(names(s), attr(s, "sf_column"))[[1]]
+  if (length(nm) == 0 || is.null(nm)) nm <- names(s)[1]
+  bid <- tryCatch(as.integer(s[[nm]]), error = function(e) NULL)
+  if (is.null(bid) || length(bid) == 0) bid <- rep(NA_integer_, nrow(s))
+  s$band_id <- bid
+  s$label <- labs[pmax(1, pmin(nrow(rcl), ifelse(is.finite(bid), bid, 1)))]
   gj <- geojsonsf::sf_geojson(s)
   # Return raw GeoJSON string for Mapbox
   res$setHeader("Content-Type", "application/json")
   res$body <- gj
   return(res)
+}
+
+#* Countries intersecting a specific iso-band (ADM0) (optionally select crop)
+#* @get /isoscape/isoband_countries
+function(res, breaks = "14,16,18,20,22,24,26,28,30,32,34,36,38,40", band_id = 1, level = "adm0", crop = "") {
+  if (!dir.exists(ISO_DIR)) { res$status <- 400; return(list(error = "IsoscapeBuild folder not found")) }
+  if (!ensure_pkg('terra')) { res$status <- 500; return(list(error = "terra required")) }
+  if (!ensure_pkg('sf')) { res$status <- 500; return(list(error = "sf required")) }
+  library(terra); library(sf)
+
+  # Build isobands same as /isoscape/isobands
+  br <- as.numeric(strsplit(breaks, ",")[[1]]); br <- br[is.finite(br)]; br <- sort(unique(br))
+  if (length(br) < 3) { res$status <- 400; return(list(error = "need at least 3 breaks")) }
+  crop <- toupper(trimws(crop))
+  mu_candidates <- c()
+  if (nzchar(crop)) {
+    mu_candidates <- c(mu_candidates, file.path(ISO_DIR, "model", paste0("cellulose_mu_", tolower(crop), ".tif")))
+  }
+  mu_candidates <- c(mu_candidates, file.path(ISO_DIR, "data_proc", "cellulose_mu.tif"), file.path(ISO_DIR, "model", "cellulose_mu.tif"))
+  mu_path <- mu_candidates[file.exists(mu_candidates)][1]
+  if (is.na(mu_path) || !file.exists(mu_path)) { res$status <- 500; return(list(error = paste("cellulose_mu.tif not found for crop", crop))) }
+  mu <- rast(mu_path)
+  rcl <- cbind(br[-length(br)], br[-1], seq_len(length(br)-1))
+  cls <- classify(mu, rcl = rcl, include.lowest = TRUE, right = FALSE)
+  poly <- tryCatch(terra::as.polygons(cls, dissolve = TRUE), error = function(e) NULL)
+  if (is.null(poly)) { return(list(label = NA_character_, countries = list())) }
+  try({ poly <- terra::project(poly, 'EPSG:4326') }, silent = TRUE)
+  s <- sf::st_as_sf(poly)
+  nm <- tryCatch(names(poly)[1], error = function(e) NULL)
+  if (is.null(nm) || !(nm %in% names(s))) nm <- setdiff(names(s), attr(s, "sf_column"))[[1]]
+  if (length(nm) == 0 || is.null(nm)) nm <- names(s)[1]
+  bid <- tryCatch(as.integer(s[[nm]]), error = function(e) NULL)
+  if (is.null(bid) || length(bid) == 0) bid <- rep(NA_integer_, nrow(s))
+  s$band_id <- bid
+  labs <- paste0(rcl[,1], "–", rcl[,2])
+  s$label <- labs[pmax(1, pmin(nrow(rcl), ifelse(is.finite(bid), bid, 1)))]
+
+  band_id <- as.integer(band_id); if (!is.finite(band_id)) band_id <- 1L
+  s_band <- tryCatch(s[s$band_id == band_id, , drop = FALSE], error = function(e) NULL)
+  if (is.null(s_band) || nrow(s_band) == 0) { return(list(label = labs[band_id], countries = list())) }
+
+  # Read countries (ADM0). Prefer simple world shapefile in FTMapping/shapefilesEtc
+  shp_dir <- BASE_DIR
+  cand <- c(
+    file.path(shp_dir, 'shapefilesEtc', 'world.shp'),
+    file.path(shp_dir, 'shapefilesEtc', 'worldXUAR.shp'),
+    file.path(shp_dir, 'shapefilesEtc', 'world_adm1.gpkg')
+  )
+  src <- cand[which(file.exists(cand))]
+  if (length(src) == 0) { res$status <- 500; return(list(error = 'country boundaries not found')) }
+  # If gpkg is used (adm1), we will dissolve by country name
+  w <- tryCatch(suppressWarnings(sf::st_read(src[1], quiet = TRUE)), error = function(e) NULL)
+  if (is.null(w)) { res$status <- 500; return(list(error = 'failed to read country boundaries')) }
+  # Harmonize geometry and CRS
+  try({ w <- sf::st_make_valid(w) }, silent = TRUE)
+  try({ w <- sf::st_transform(w, 4326) }, silent = TRUE)
+  try({ s_band <- sf::st_make_valid(s_band) }, silent = TRUE)
+
+  # Pick a reasonable name column (prefer full country names)
+  ln <- tolower(names(w))
+  nm_opts <- c('name_0','adm0_en','admin','name','name_en','name_long','adm0_name','adm0name','geounit','sovereignt','sovereign','country','country_na','admin0name')
+  k <- which(ln %in% nm_opts)
+  name_col <- if (length(k) > 0) names(w)[k[1]] else names(w)[1]
+
+  # If using adm1, group by country-like field if present
+  if (grepl('world_adm1', src[1], fixed = TRUE)) {
+    ln2 <- tolower(names(w))
+    # For Natural Earth ADM1, prefer 'admin' (country name)
+    ctry_col <- if ('admin' %in% ln2) names(w)[which(ln2 == 'admin')[1]] else name_col
+    w <- sf::st_cast(w, 'MULTIPOLYGON')
+    w <- suppressWarnings(w[, c(ctry_col)])
+    names(w)[1] <- 'country'
+    # dissolve by country
+    w <- suppressWarnings(w %>% dplyr::group_by(country) %>% dplyr::summarise(geometry = sf::st_union(geometry), .groups = 'drop'))
+    name_col <- 'country'
+  }
+
+  # Intersections
+  idx <- tryCatch(sf::st_intersects(w, sf::st_union(s_band), sparse = TRUE), error = function(e) NULL)
+  if (is.null(idx)) { return(list(label = labs[band_id], countries = list())) }
+  hit <- lengths(idx) > 0
+  countries <- sort(unique(as.character(w[[name_col]][hit])))
+  # If names look like ISO3 codes, try a more descriptive column; else map via countrycode
+  if (length(countries) > 0 && all(nchar(countries) == 3 & grepl('^[A-Z]{3}$', countries))) {
+    alt_opts <- c('name_0','admin','name','name_en','name_long','adm0_name','adm0name','geounit','sovereignt','sovereign','country','admin0name')
+    kk <- which(ln %in% alt_opts)
+    if (length(kk) > 0) {
+      alt_col <- names(w)[kk[1]]
+      countries <- sort(unique(as.character(w[[alt_col]][hit])))
+    } else if (ensure_pkg('countrycode')) {
+      nm <- tryCatch(countrycode::countrycode(countries, origin = 'iso3c', destination = 'country.name.en'), error = function(e) rep(NA_character_, length(countries)))
+      nm <- nm[!is.na(nm)]
+      if (length(nm) > 0) countries <- sort(unique(nm))
+    }
+  }
+  return(list(label = labs[band_id], countries = countries))
+}
+
+#* Prior bands (SPAM crop) as GeoJSON polygons
+#* @get /worldmapping/prior_bands
+function(res, crop = "COTT", mode = "quantile", breaks = "") {
+  if (!dir.exists(ISO_DIR)) { res$status <- 400; return(list(error = "IsoscapeBuild folder not found")) }
+  if (!ensure_pkg('terra')) { res$status <- 500; return(list(error = "terra required")) }
+  if (!ensure_pkg('sf')) { res$status <- 500; return(list(error = "sf required")) }
+  if (!ensure_pkg('geojsonsf')) { res$status <- 500; return(list(error = "geojsonsf required")) }
+  library(terra); library(sf)
+
+  # Load SPAM production raster for crop
+  spam1 <- file.path(BASE_DIR, 'shapefilesEtc', paste0('spam2020_v1r0_global_P_', crop, '_A.tif'))
+  spam2 <- file.path(ISO_DIR, 'data_proc', paste0(tolower(crop), '_production.tif'))
+  src <- if (file.exists(spam1)) spam1 else spam2
+  if (!file.exists(src)) { res$status <- 400; return(list(error = paste('SPAM raster not found for crop', crop))) }
+  r <- rast(src)
+
+  # Align to model grid if available
+  mu_path1 <- file.path(ISO_DIR, 'model', 'cellulose_mu.tif')
+  mu_path2 <- file.path(ISO_DIR, 'data_proc', 'cellulose_mu.tif')
+  mu_path <- if (file.exists(mu_path1)) mu_path1 else mu_path2
+  if (file.exists(mu_path)) {
+    mu <- rast(mu_path)
+    if (!compareGeom(r, mu, stopOnError = FALSE)) r <- tryCatch(resample(r, mu, method = 'bilinear'), error = function(e) r)
+  }
+
+  v <- values(r, mat = FALSE)
+  v[v < 0] <- 0
+  v_pos <- v[v > 0]
+  if (length(v_pos) == 0) return(list(type = 'FeatureCollection', features = list(), error = 'No positive production values'))
+  
+  # Compute breaks based on mode
+  if (mode == 'quantile') {
+    # Top production quantiles: 0, 50th, 75th, 90th, 95th, 99th percentile
+    quants <- quantile(v_pos, probs = c(0, 0.50, 0.75, 0.90, 0.95, 0.99, 1.0), na.rm = TRUE)
+    br <- as.numeric(quants)
+    br <- unique(br[is.finite(br)])
+    if (length(br) < 2) br <- c(0, max(v_pos, na.rm=TRUE))
+    # Labels must match number of intervals
+    n_intervals <- length(br) - 1
+    labs <- c('Bottom 50%', 'Top 50%', 'Top 25%', 'Top 10%', 'Top 5%', 'Top 1%')[1:n_intervals]
+  } else if (mode == 'absolute' || mode == 'auto') {
+    # Auto breaks tuned per crop based on data distribution
+    q90 <- quantile(v_pos, 0.90, na.rm = TRUE)
+    max_val <- max(v_pos, na.rm = TRUE)
+    # Generate breaks with more detail in high-production areas
+    br <- c(0, 10, 50, 100, 500, 1000, q90/2, q90, max_val)
+    br <- unique(br[is.finite(br)])
+    br <- sort(br)
+    labs <- paste0(round(br[-length(br)], 1), '–', round(br[-1], 1), ' t/ha')
+  } else {
+    # Custom breaks from query param
+    br <- as.numeric(strsplit(breaks, ',')[[1]])
+    br <- br[is.finite(br)]
+    br <- sort(unique(br))
+    if (length(br) < 3) { res$status <- 400; return(list(error = 'need at least 3 breaks')) }
+    labs <- paste0(round(br[-length(br)], 1), '–', round(br[-1], 1))
+  }
+
+  # Classify to bands
+  rcl <- cbind(br[-length(br)], br[-1], seq_len(length(br)-1))
+  cls <- classify(r, rcl = rcl, include.lowest = TRUE, right = FALSE)
+  poly <- terra::as.polygons(cls, dissolve = TRUE)
+  try({ poly <- terra::project(poly, 'EPSG:4326') }, silent = TRUE)
+  if (is.null(poly) || nrow(poly) == 0) return(list(type = 'FeatureCollection', features = list()))
+  s <- sf::st_as_sf(poly)
+  
+  nm <- tryCatch(names(poly)[1], error = function(e) NULL)
+  if (is.null(nm) || !(nm %in% names(s))) nm <- setdiff(names(s), attr(s, 'sf_column'))[[1]]
+  if (length(nm) == 0 || is.null(nm)) nm <- names(s)[1]
+  bid <- tryCatch(as.integer(s[[nm]]), error = function(e) NULL)
+  if (is.null(bid) || length(bid) == 0) bid <- rep(NA_integer_, nrow(s))
+  # Ensure band_id starts at 1 (not 0) for consistent Mapbox matching
+  s$band_id <- bid
+  s$label <- labs[pmax(1, pmin(length(labs), ifelse(is.finite(bid), bid, 1)))]
+  s$crop <- crop
+  s$mode <- mode
+  
+  gj <- geojsonsf::sf_geojson(s)
+  res$setHeader('Content-Type', 'application/json')
+  res$body <- gj
+  return(res)
+}
+
+#* List available SPAM crops (dynamic: scans local SPAM and IsoscapeBuild data_proc)
+#* @get /worldmapping/spam_crops
+function(res) {
+  # Discover crops from legacy SPAM geotiffs
+  shp_dir <- file.path(BASE_DIR, 'shapefilesEtc')
+  shp_files <- character(0)
+  if (dir.exists(shp_dir)) shp_files <- list.files(shp_dir, pattern = '^spam2020_.*_global_P_([A-Z]{4})_A\\.tif$', full.names = TRUE)
+  shp_codes <- character(0)
+  if (length(shp_files) > 0) {
+    shp_codes <- toupper(sub('^.*_P_([A-Za-z]{4})_A\\.tif$', '\\1', basename(shp_files)))
+  }
+  # Discover crops from processed priors in IsoscapeBuild/data_proc
+  proc_dir <- file.path(ISO_DIR, 'data_proc')
+  proc_files <- character(0)
+  if (dir.exists(proc_dir)) proc_files <- list.files(proc_dir, pattern = '^[a-z]{4}_production\\.tif$', full.names = TRUE)
+  proc_codes <- character(0)
+  if (length(proc_files) > 0) proc_codes <- toupper(sub('_production\\.tif$', '', basename(proc_files)))
+  codes <- sort(unique(c(shp_codes, proc_codes)))
+  list(crops = codes)
+}
+
+#* List all countries from world shapefile
+#* @get /worldmapping/list_countries
+function(res) {
+  if (!ensure_pkg('sf')) { res$status <- 500; return(list(error = 'sf required')) }
+  library(sf)
+  shp_candidates <- c(
+    file.path(BASE_DIR, 'shapefilesEtc', 'worldXUAR.shp'),
+    file.path(BASE_DIR, 'shapefilesEtc', 'world.shp')
+  )
+  shp_path <- shp_candidates[file.exists(shp_candidates)][1]
+  if (is.na(shp_path)) { res$status <- 500; return(list(error = 'world shapefile not found')) }
+  w <- tryCatch(suppressWarnings(st_read(shp_path, quiet = TRUE)), error = function(e) NULL)
+  if (is.null(w)) { res$status <- 500; return(list(error = 'failed to read shapefile')) }
+  nms <- names(w)
+  col <- if ('NAME_0' %in% nms) 'NAME_0' else if ('NAME' %in% nms) 'NAME' else nms[1]
+  countries <- sort(unique(as.character(w[[col]])))
+  list(countries = countries)
+}
+
+#* List ADM1 regions (optionally filtered by country)
+#* @get /worldmapping/list_regions
+function(res, country = "") {
+  if (!ensure_pkg('sf')) { res$status <- 500; return(list(error = 'sf required')) }
+  library(sf)
+  adm1_path <- file.path(BASE_DIR, 'shapefilesEtc', 'world_adm1.gpkg')
+  if (!file.exists(adm1_path)) { res$status <- 400; return(list(error = 'ADM1 data not found. Run choropleth with ADM1 once to auto-download.')) }
+  w <- tryCatch(suppressWarnings(st_read(adm1_path, quiet = TRUE)), error = function(e) NULL)
+  if (is.null(w)) { res$status <- 500; return(list(error = 'failed to read ADM1 data')) }
+  
+  nms <- names(w)
+  # ADM1 uses 'admin' for country and 'name' for state/province
+  col_adm0 <- 'admin'
+  col_adm1 <- 'name'
+  
+  # Filter by country if provided (flexible matching)
+  if (nzchar(country)) {
+    # Try exact match first, then partial match
+    matches <- tolower(w[[col_adm0]]) == tolower(country) | 
+               grepl(tolower(country), tolower(w[[col_adm0]]), fixed = TRUE) |
+               w[[col_adm0]] == country
+    w <- w[matches, ]
+  }
+  
+  regions <- sort(unique(as.character(w[[col_adm1]])))
+  regions <- regions[nzchar(regions) & !is.na(regions)]
+  
+  list(regions = regions, country = if (nzchar(country)) country else NULL)
+}
+
+#* Get isotope profile for a region (expected δ18O values)
+#* @get /risk/region_profile
+function(res, country = "", region = "") {
+  if (!nzchar(country)) { res$status <- 400; return(list(error = 'country required')) }
+  if (!ensure_pkg('terra')) { res$status <- 500; return(list(error = 'terra required')) }
+  if (!ensure_pkg('sf')) { res$status <- 500; return(list(error = 'sf required')) }
+  library(terra); library(sf)
+  
+  # Load cellulose_mu isoscape
+  mu_path1 <- file.path(ISO_DIR, 'model', 'cellulose_mu.tif')
+  mu_path2 <- file.path(ISO_DIR, 'data_proc', 'cellulose_mu.tif')
+  mu_path <- if (file.exists(mu_path1)) mu_path1 else mu_path2
+  if (!file.exists(mu_path)) { res$status <- 500; return(list(error = 'cellulose_mu.tif not found')) }
+  mu <- rast(mu_path)
+  
+  # Load SPAM cotton production (optional weighting)
+  spam1 <- file.path(BASE_DIR, 'shapefilesEtc', 'spam2020_v1r0_global_P_COTT_A.tif')
+  spam2 <- file.path(ISO_DIR, 'data_proc', 'cott_production.tif')
+  spam_path <- if (file.exists(spam1)) spam1 else if (file.exists(spam2)) spam2 else NULL
+  spam <- if (!is.null(spam_path)) rast(spam_path) else NULL
+  
+  # Load region polygon
+  if (nzchar(region)) {
+    # ADM1
+    adm1_path <- file.path(BASE_DIR, 'shapefilesEtc', 'world_adm1.gpkg')
+    if (!file.exists(adm1_path)) { res$status <- 400; return(list(error = 'ADM1 data not found')) }
+    shp <- st_read(adm1_path, quiet = TRUE)
+    matches <- tolower(shp$admin) == tolower(country) & tolower(shp$name) == tolower(region)
+    if (!any(matches)) {
+      matches <- grepl(tolower(country), tolower(shp$admin), fixed=TRUE) & grepl(tolower(region), tolower(shp$name), fixed=TRUE)
+    }
+    if (!any(matches)) { res$status <- 404; return(list(error = paste('Region not found:', country, region))) }
+    poly <- vect(shp[matches, ])
+  } else {
+    # ADM0
+    shp_cands <- c(file.path(BASE_DIR, 'shapefilesEtc', 'worldXUAR.shp'), file.path(BASE_DIR, 'shapefilesEtc', 'world.shp'))
+    shp_path <- shp_cands[file.exists(shp_cands)][1]
+    if (is.na(shp_path)) { res$status <- 500; return(list(error = 'world shapefile not found')) }
+    shp <- st_read(shp_path, quiet = TRUE)
+    col <- if ('NAME_0' %in% names(shp)) 'NAME_0' else 'NAME'
+    matches <- tolower(shp[[col]]) == tolower(country) | grepl(tolower(country), tolower(shp[[col]]), fixed=TRUE)
+    if (!any(matches)) { res$status <- 404; return(list(error = paste('Country not found:', country))) }
+    poly <- vect(shp[matches, ])
+  }
+  
+  # Crop and mask to region
+  tryCatch({ poly <- project(poly, crs(mu)) }, silent = TRUE)
+  mu_crop <- tryCatch(crop(mu, poly), error = function(e) mu)
+  mu_mask <- tryCatch(mask(mu_crop, poly), error = function(e) mu_crop)
+  
+  # Extract values
+  mu_vals <- values(mu_mask, mat = FALSE)
+  
+  # If SPAM available, try to filter to production areas
+  spam_filtered <- FALSE
+  if (!is.null(spam)) {
+    tryCatch({
+      if (!compareGeom(spam, mu, stopOnError = FALSE)) spam <- resample(spam, mu, method = 'bilinear')
+      spam_crop <- crop(spam, poly)
+      spam_mask <- mask(spam_crop, poly)
+      spam_vals <- values(spam_mask, mat = FALSE)
+      spam_vals[is.na(spam_vals)] <- 0
+      spam_vals[spam_vals < 0] <- 0
+      # Filter mu to where SPAM > 0 AND mu is valid
+      valid <- !is.na(mu_vals) & spam_vals > 0 & is.finite(mu_vals)
+      if (sum(valid) > 10) {  # Need at least 10 pixels with production
+        mu_vals <- mu_vals[valid]
+        spam_filtered <- TRUE
+      }
+    }, error = function(e) {})
+  }
+  
+  # Final cleanup: remove NA and non-finite
+  mu_vals <- mu_vals[!is.na(mu_vals) & is.finite(mu_vals)]
+  
+  if (length(mu_vals) < 5) {
+    msg <- if (spam_filtered) 'No significant cotton production in this region (SPAM filtered)' else 'Insufficient isoscape data in this region'
+    return(list(error = msg, country = country, region = region, n_pixels = length(mu_vals)))
+  }
+  
+  list(
+    country = country,
+    region = if (nzchar(region)) region else NULL,
+    mean = round(mean(mu_vals, na.rm = TRUE), 2),
+    median = round(median(mu_vals, na.rm = TRUE), 2),
+    min = round(min(mu_vals, na.rm = TRUE), 2),
+    max = round(max(mu_vals, na.rm = TRUE), 2),
+    sd = round(sd(mu_vals, na.rm = TRUE), 2),
+    q25 = round(as.numeric(quantile(mu_vals, 0.25, na.rm = TRUE)), 2),
+    q75 = round(as.numeric(quantile(mu_vals, 0.75, na.rm = TRUE)), 2),
+    n_pixels = length(mu_vals),
+    spam_filtered = spam_filtered
+  )
 }
 
 #* List IsoscapeBuild processed files

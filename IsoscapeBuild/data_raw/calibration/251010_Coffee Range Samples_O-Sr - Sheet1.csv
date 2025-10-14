@@ -1,0 +1,46 @@
+Country,Region,δ18O,δ18O σ,Farms,Replicates,Sr8786,Sr8786 σ
+Brazil,Carmo de Minas,32.1,0.1,1,2,0.71623,0.00015
+Brazil,"Cerrado, Minas Gerais",32.2,0.3,1,2,0.71221,
+Brazil,Espirito Santo,33.4,1.4,1,2,0.70974,
+Brazil,Mogiana,30.2,0.0,1,2,0.70782,
+Brazil,N/A,31.6,0.2,1,2,0.71270,
+Burundi,Gakenke,34.8,0.7,1,4,0.72405,0.00079
+Colombia,Tolima,24.4,1.2,2,4,0.70729,0.00050
+Colombia,"Palestina, Huila",28.7,0.5,1,2,0.70751,
+Colombia,Vereda Montalvo,26.0,0.7,1,2,0.70548,
+Costa Rica,N/A,26.7,0.6,1,2,0.70506,
+Costa Rica,Tarrazu,24.1,0.5,2,4,0.70576,0.00012
+El Salvador,Apaneca,27.5,3.1,2,4,0.70432,
+Ethiopia,Gedeb Distric,35.9,0.3,1,2,,
+Ethiopia,Guji,33.7,0.3,1,2,0.70764,
+Ethiopia,Yirgacheffe,33.1,0.9,1,2,0.70740,
+Guatemala,Antigua,32.4,0.1,1,2,0.70446,0.00008
+Guatemala,Huehuetenango,27.4,0.0,1,2,0.70790,
+Guatemala,N/A,26.5,0.2,1,2,0.70717,
+Honduras,Marcala,26.3,0.1,1,2,0.70530,
+Honduras,N/A,29.7,0.2,1,2,0.70581,
+Honduras,Santa Barbara,27.6,0.8,1,2,0.70496,
+India,Chikmagalur,30.9,0.0,1,2,0.71418,
+Indonesia,Kokowagayo,27.7,0.2,1,2,0.70438,
+Indonesia,Sumatra,26.0,0.1,1,2,0.70595,
+Indonesia,"Toraja, Sulawesi",26.8,0.1,1,2,0.70466,0.00004
+Kenya,Nyeri,36.9,N/A,1,1,0.70633,0.00008
+Mexico,Chiapas,26.4,0.6,1,2,0.70676,
+Nicaragua,Jinotega,27.9,1.2,2,4,0.70459,
+Panama,N/A,25.1,0.4,1,2,0.70400,
+Panama,Volcan,24.3,0.1,1,2,0.70409,
+Papua New Guinea,Kainantu,22.8,0.5,1,13,0.70397,
+Papua New Guinea,Kimel Estate,22.8,0.2,1,2,,
+Peru,Centrocafe,23.5,0.1,1,2,0.70544,
+Peru,N/A,24.9,0.3,1,2,0.72062,
+Rwanda,Nyakibanda,36.3,0.1,1,2,0.72101,
+Tanzania,Mbeya,34.6,0.6,1,2,0.70593,
+USA,Hilo,30.5,0.2,1,2,0.70792,
+USA,"Ka'anapali, Maui",33.9,0.8,1,2,0.70693,
+USA,Ka'u,29.2,0.1,1,2,0.70618,
+USA,Kona,30.1,0.5,1,46,0.70589,0.00056
+USA,Moloka'i,32.6,0.1,1,2,0.70805,
+USA,"Waialua, Oahu",33.0,0.1,1,2,0.70792,
+Vietnam,Central Highlands,23.3,0.1,1,2,0.70891,
+Yemen,"Bura'a, Western Highlands",39.2,0.1,1,2,0.70804,
+Yemen,N/A,41.2,0.5,1,14,0.70734,

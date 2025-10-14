@@ -1,0 +1,9 @@
+sample_id,d18O_cellulose,lat,lon,elevation,harvest_year,species,processing_method,irrigation
+BR_001,26.8,-15.8,-47.9,1100,2020,arabica,washed,rainfed
+VN_001,28.5,12.9,108.0,450,2021,robusta,natural,irrigated
+CO_001,24.2,4.5,-75.7,1650,2019,arabica,washed,rainfed
+ET_001,25.9,7.8,37.2,1850,2020,arabica,washed,rainfed
+ID_001,27.1,-7.6,110.4,1200,2020,arabica,wet-hulled,rainfed
+
+
+

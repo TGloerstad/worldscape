@@ -15,7 +15,9 @@ align_to_target <- function(r) {
   target <- get_target_grid()
   if (!compareGeom(r, target, stopOnError = FALSE)) {
     r <- project(r, target)
-    r <- resample(r, target, method = if (is.factor(r)) "near" else "bilinear")
+    # 'is.factor' returns a logical vector for multilayer rasters; use NEAR if any band is categorical
+    method <- if (any(is.factor(r))) "near" else "bilinear"
+    r <- resample(r, target, method = method)
   }
   r
 }

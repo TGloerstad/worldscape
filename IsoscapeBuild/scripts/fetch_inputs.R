@@ -211,12 +211,22 @@ if ("worldclim" %in% sources) {
   state$current <- list(source = "worldclim", step = "align"); write_status(state)
   tavg_r <- align_to_target(stack_monthly(unz_tavg, "tavg_.*.tif$|tavg.*.tif$"))
   vap_r  <- align_to_target(stack_monthly(unz_vap,  "vapr_.*.tif$|vapr.*.tif$"))
+  state$current <- list(source = "worldclim", step = "compute_vpd"); write_status(state)
+  # Compute saturation vapour pressure (kPa) via Tetens formula using monthly mean temperature (°C)
+  # es(T) = 0.6108 * exp(17.27*T / (T + 237.3))  (kPa)
+  # WorldClim vapr is actual vapour pressure (kPa). VPD = es - vapr, clamped to [0, inf).
+  es <- 0.6108 * exp(17.27 * tavg_r / (tavg_r + 237.3))
+  vpd <- es - vap_r
+  vpd[vpd < 0] <- 0
+  # Relative humidity approximation (0-1) if needed: rh = vapr / es, clamped
+  rh <- vap_r / es
+  rh[rh < 0] <- 0; rh[rh > 1] <- 1
   state$current <- list(source = "worldclim", step = "write"); write_status(state)
   writeRaster(tavg_r, file.path(proc_dir, "tmean_monthly.tif"), overwrite = TRUE)
   writeRaster(vap_r,  file.path(proc_dir, "vapour_pressure_monthly.tif"), overwrite = TRUE)
-
-  # Placeholder: copy vap as rh_or_vpd for now
-  writeRaster(vap_r, file.path(proc_dir, "rh_or_vpd_monthly.tif"), overwrite = TRUE)
+  writeRaster(vpd,    file.path(proc_dir, "vpd_monthly.tif"), overwrite = TRUE)
+  # Backward-compatible alias used elsewhere in the codebase
+  writeRaster(vpd,    file.path(proc_dir, "rh_or_vpd_monthly.tif"), overwrite = TRUE)
   ft <- as.character(Sys.time())
   state$sources$worldclim <- list(success = TRUE, finished_at = ft)
   update_summary("worldclim", list(last_fetched = ft, version = "WorldClim 2.1 (10 arc-min)"))
@@ -247,19 +257,48 @@ if ("spam" %in% sources) {
 }
 
 if ("mirca" %in% sources) {
-  # 4) MIRCA calendars placeholder
-  message("MIRCA calendars: placeholder monthly weights (uniform across months) …"); log_line("[mirca] start")
-  state$current <- list(source = "mirca", step = "write"); write_status(state)
+  # 4) MIRCA calendars: prefer provided monthly weights; else uniform placeholder
+  message("MIRCA calendars: generating monthly weights …"); log_line("[mirca] start")
+  state$current <- list(source = "mirca", step = "detect"); write_status(state)
   mask_path <- file.path(proc_dir, paste0(tolower(crop_code), "_mask.tif"))
+  out_weights <- file.path(proc_dir, paste0(tolower(crop_code), "_calendar_monthly_weights.tif"))
+  cand_weights <- file.path(raw_mirca, paste0(tolower(crop_code), "_calendar_monthly_weights.tif"))
   if (file.exists(mask_path)) {
     mask <- rast(mask_path)
-    w <- rep(list(mask), 12)
-    weights <- rast(w)
-    values(weights) <- ifelse(values(weights) > 0, 1/12, 0)
-    writeRaster(weights, file.path(proc_dir, paste0(tolower(crop_code), "_calendar_monthly_weights.tif")), overwrite = TRUE)
+    weights <- NULL
+    if (file.exists(cand_weights)) {
+      # Use provided multi-layer weights, aligned to model grid
+      state$current <- list(source = "mirca", step = "align"); write_status(state)
+      weights_raw <- suppressWarnings(try(rast(cand_weights), silent = TRUE))
+      if (!inherits(weights_raw, "SpatRaster")) weights_raw <- NULL
+      if (!is.null(weights_raw) && nlyr(weights_raw) == 12) {
+        weights <- align_to_target(weights_raw)
+        # Normalize to sum=1 where mask>0
+        s <- app(weights, fun = sum, na.rm = TRUE)
+        s[s == 0] <- NA
+        weights <- weights / s
+        # Zero outside mask
+        weights <- mask(weights, mask > 0, maskvalues = 0, updatevalue = 0)
+        version_note <- "MIRCA calendars (provided)"
+      }
+    }
+    if (is.null(weights)) {
+      # Uniform fallback
+      state$current <- list(source = "mirca", step = "fallback_uniform"); write_status(state)
+      w <- rep(list(mask), 12)
+      weights <- rast(w)
+      mvals <- values(mask)
+      mvals <- ifelse(mvals > 0, 1/12, 0)
+      # replicate across 12 layers
+      wmat <- do.call(cbind, replicate(12, mvals, simplify = FALSE))
+      values(weights) <- wmat
+      version_note <- "MIRCA calendars (uniform placeholder)"
+    }
+    state$current <- list(source = "mirca", step = "write"); write_status(state)
+    writeRaster(weights, out_weights, overwrite = TRUE)
     ft <- as.character(Sys.time())
     state$sources$mirca <- list(success = TRUE, finished_at = ft)
-    update_summary("mirca", list(last_fetched = ft, version = "MIRCA calendars (placeholder)"))
+    update_summary("mirca", list(last_fetched = ft, version = version_note))
     log_line("[mirca] done")
   }
 } else {

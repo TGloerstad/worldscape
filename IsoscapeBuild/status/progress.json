@@ -1,1 +1,1 @@
-{"running":false,"started_at":"2025-09-18 15:38:39.985037","current":{"source":"spam","step":"process"},"sources":{"spam":{"success":true,"finished_at":"2025-09-18 15:38:40.344299"}},"finished_at":"2025-09-18 15:38:40.34537"}
+{"running":false,"started_at":"2025-10-10 16:28:05.80435","current":{"source":"mirca","step":"write"},"sources":{"mirca":{"success":true,"finished_at":"2025-10-10 16:28:09.565111"}},"finished_at":"2025-10-10 16:28:09.568898"}

@@ -21,6 +21,12 @@ Run (from repo root):
 R -q -e "source('IsoscapeBuild/scripts/fetch_inputs.R')"
 ```
 
+Calibration:
+- Place reference samples in `data_raw/calibration/cotton_calibration_enhanced.csv`
+- See `CALIBRATION_REFERENCES.md` for academic papers and data sources
+- See `CALIBRATION_ACTION_PLAN.md` for improving the calibration dataset
+- Run diagnostic: `Rscript scripts/diagnose_calibration.R`
+
 Notes:
 - Resolution: 10 arc‑min (WGS84). Change in `scripts/utils.R` if needed later.
 - OIPC is included as research-only; see OIPC license/terms before redistribution.

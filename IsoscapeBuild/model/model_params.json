@@ -1,8 +1,10 @@
 {
-  "a0": 28.3459,
-  "b_precip": 0.738,
-  "c_tmean": 0.2432,
-  "sigma": 1.843,
+  "a0": 37.55,
+  "b_precip": 1.0566,
+  "c_tmean": -0.3348,
+  "d_vpd": 1.8902,
+  "sigma": 1.8778,
   "used_calibration": true,
-  "n": 10
+  "n": 25,
+  "method": "empirical_fit"
 }

@@ -1,0 +1,46 @@
+"sample_id","d18O_cellulose","lat","lon","country","region","d18O_sd","farms","replicates","sr87_86","sr87_86_sd"
+"Brazil_1",32.1,-22.12,-45.13,"Brazil","Carmo de Minas","0.1",1,2,0.71623,0.00015
+"Brazil_2",32.2,-17.8,-46.5,"Brazil","Cerrado, Minas Gerais","0.3",1,2,0.71221,NA
+"Brazil_3",33.4,-19.5,-40.6,"Brazil","Espirito Santo","1.4",1,2,0.70974,NA
+"Brazil_4",30.2,-21.5,-47,"Brazil","Mogiana","0.0",1,2,0.70782,NA
+"Brazil_5",31.6,-15.8,-47.9,"Brazil","N/A","0.2",1,2,0.7127,NA
+"Burundi_6",34.8,-1.68,29.8,"Burundi","Gakenke","0.7",1,4,0.72405,0.00079
+"Colombia_7",24.4,4.09,-75.15,"Colombia","Tolima","1.2",2,4,0.70729,5e-04
+"Colombia_8",28.7,2.34,-76,"Colombia","Palestina, Huila","0.5",1,2,0.70751,NA
+"Colombia_9",26,4.5,-75.7,"Colombia","Vereda Montalvo","0.7",1,2,0.70548,NA
+"Costa Rica_10",26.7,9.93,-84.08,"Costa Rica","N/A","0.6",1,2,0.70506,NA
+"Costa Rica_11",24.1,9.58,-84.02,"Costa Rica","Tarrazu","0.5",2,4,0.70576,0.00012
+"El Salvador_12",27.5,13.85,-89.8,"El Salvador","Apaneca","3.1",2,4,0.70432,NA
+"Ethiopia_13",35.9,5.95,38.3,"Ethiopia","Gedeb Distric","0.3",1,2,NA,NA
+"Ethiopia_14",33.7,5.8,38.8,"Ethiopia","Guji","0.3",1,2,0.70764,NA
+"Ethiopia_15",33.1,6.16,38.2,"Ethiopia","Yirgacheffe","0.9",1,2,0.7074,NA
+"Guatemala_16",32.4,14.56,-90.73,"Guatemala","Antigua","0.1",1,2,0.70446,8e-05
+"Guatemala_17",27.4,15.32,-91.47,"Guatemala","Huehuetenango","0.0",1,2,0.7079,NA
+"Guatemala_18",26.5,14.64,-90.51,"Guatemala","N/A","0.2",1,2,0.70717,NA
+"Honduras_19",26.3,14.15,-88.03,"Honduras","Marcala","0.1",1,2,0.7053,NA
+"Honduras_20",29.7,14.4,-87.8,"Honduras","N/A","0.2",1,2,0.70581,NA
+"Honduras_21",27.6,14.92,-88.24,"Honduras","Santa Barbara","0.8",1,2,0.70496,NA
+"India_22",30.9,13.32,75.77,"India","Chikmagalur","0.0",1,2,0.71418,NA
+"Indonesia_23",27.7,-8.7,120.5,"Indonesia","Kokowagayo","0.2",1,2,0.70438,NA
+"Indonesia_24",26,2.5,98.5,"Indonesia","Sumatra","0.1",1,2,0.70595,NA
+"Indonesia_25",26.8,-3.08,119.83,"Indonesia","Toraja, Sulawesi","0.1",1,2,0.70466,4e-05
+"Kenya_26",36.9,-0.42,36.95,"Kenya","Nyeri","N/A",1,1,0.70633,8e-05
+"Mexico_27",26.4,15.5,-92.5,"Mexico","Chiapas","0.6",1,2,0.70676,NA
+"Nicaragua_28",27.9,13.09,-85.99,"Nicaragua","Jinotega","1.2",2,4,0.70459,NA
+"Panama_29",25.1,8.54,-80.78,"Panama","N/A","0.4",1,2,0.704,NA
+"Panama_30",24.3,8.77,-82.64,"Panama","Volcan","0.1",1,2,0.70409,NA
+"Papua New Guinea_31",22.8,-6.37,145.86,"Papua New Guinea","Kainantu","0.5",1,13,0.70397,NA
+"Papua New Guinea_32",22.8,-6.1,145.4,"Papua New Guinea","Kimel Estate","0.2",1,2,NA,NA
+"Peru_33",23.5,-5.5,-78.5,"Peru","Centrocafe","0.1",1,2,0.70544,NA
+"Peru_34",24.9,-12,-77,"Peru","N/A","0.3",1,2,0.72062,NA
+"Rwanda_35",36.3,-2.6,29.74,"Rwanda","Nyakibanda","0.1",1,2,0.72101,NA
+"Tanzania_36",34.6,-8.9,33.45,"Tanzania","Mbeya","0.6",1,2,0.70593,NA
+"USA_37",30.5,19.7,-155.09,"USA","Hilo","0.2",1,2,0.70792,NA
+"USA_38",33.9,20.93,-156.69,"USA","Ka'anapali, Maui","0.8",1,2,0.70693,NA
+"USA_39",29.2,19.08,-155.58,"USA","Ka'u","0.1",1,2,0.70618,NA
+"USA_40",30.1,19.64,-155.99,"USA","Kona","0.5",1,46,0.70589,0.00056
+"USA_41",32.6,21.15,-157.02,"USA","Moloka'i","0.1",1,2,0.70805,NA
+"USA_42",33,21.58,-158.13,"USA","Waialua, Oahu","0.1",1,2,0.70792,NA
+"Vietnam_43",23.3,12.5,108,"Vietnam","Central Highlands","0.1",1,2,0.70891,NA
+"Yemen_44",39.2,15.4,44,"Yemen","Bura'a, Western Highlands","0.1",1,2,0.70804,NA
+"Yemen_45",41.2,15.35,44.2,"Yemen","N/A","0.5",1,14,0.70734,NA
